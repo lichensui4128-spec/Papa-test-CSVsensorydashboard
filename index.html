@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sensory Dashboard</title>
+
+  <!-- Papa Parse -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; }
+    .app { display: grid; grid-template-columns: 360px 1fr; min-height: 100vh; }
+    .sidebar { border-right: 1px solid #ddd; padding: 14px; overflow: auto; }
+    .main { padding: 14px; overflow: auto; }
+
+    h2 { margin: 6px 0 10px; }
+    label { display: block; font-size: 12px; color: #555; margin: 10px 0 4px; }
+
+    select, input[type="file"], button { width: 100%; padding: 8px; }
+    input[type="range"] { width: 100%; }
+    .muted { color: #666; font-size: 12px; }
+    .status { margin-top: 8px; font-size: 12px; color: #444; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .card { border: 1px solid #e2e2e2; border-radius: 10px; padding: 12px; }
+    canvas { max-height: 360px; }
+
+    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    th, td { border: 1px solid #e2e2e2; padding: 6px 8px; }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 2; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .small { font-size: 12px; }
+
+    .btnRow { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    .legend-tip {
+      position: fixed;
+      z-index: 9999;
+      padding: 6px 8px;
+      background: #111;
+      color: #fff;
+      font-size: 12px;
+      border-radius: 4px;
+      display: none;
+      pointer-events: none;
+      max-width: 320px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .rangeLabel { font-size: 12px; color: #555; margin-top: 4px; }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <div class="sidebar">
+      <h2>Filters (Multi-select)</h2>
+
+      <label>Upload CSV</label>
+      <input type="file" id="csvFile" accept=".csv" />
+      <div id="status" class="status"></div>
+      <div class="muted">Tip: If your file is .xlsx, export it to .csv first.</div>
+
+      <div class="btnRow">
+        <button id="clearAllBtn">Clear all filters (reset)</button>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Tip: Use Ctrl (Windows) / Cmd (Mac) to select multiple. No selection = All.
+      </div>
+
+      <label>Question Description (default = All)</label>
+      <select id="f_question" multiple size="6"></select>
+
+      <label>Region</label>
+      <select id="f_region" multiple size="6"></select>
+
+      <label>Study Name</label>
+      <select id="f_study_name" multiple size="6"></select>
+
+      <label>Study ID</label>
+      <select id="f_study_id" multiple size="6"></select>
+
+      <label>Test Name</label>
+      <select id="f_test_name" multiple size="6"></select>
+
+      <label>Test ID</label>
+      <select id="f_test_id" multiple size="6"></select>
+
+      <label>Test Start Date</label>
+      <input type="range" id="f_test_date" min="0" max="0" value="0" />
+      <div id="f_test_date_label" class="rangeLabel">All</div>
+
+      <label>Protocol Term</label>
+      <select id="f_protocol" multiple size="6"></select>
+
+      <label>Cooking Method</label>
+      <select id="f_cooking" multiple size="6"></select>
+
+      <label>Product Description</label>
+      <select id="f_product_desc" multiple size="6"></select>
+
+      <label>Product Code</label>
+      <select id="f_product_code" multiple size="6"></select>
+
+      <label>TestSample_ID (drives series legend)</label>
+      <select id="f_testsample" multiple size="8"></select>
+    </div>
+
+    <div class="main">
+      <h2>Sensory Dashboard</h2>
+
+      <div class="card">
+        <div class="muted">KPI = Avg Response for the FIRST selected Question (after filters)</div>
+        <div id="kpiLine" class="small"></div>
+      </div>
+
+      <div class="grid2" style="margin-top:14px;">
+        <div class="card">
+          <div class="muted">Radar: Questions as axes, legend = TestSample_ID</div>
+          <canvas id="radarChart"></canvas>
+        </div>
+
+        <div class="card">
+          <div class="muted">Bar: Questions as categories, legend = TestSample_ID</div>
+          <canvas id="barChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <div class="row">
+          <div>
+            <div class="muted">Pivot Table</div>
+            <div class="small">
+              Rows: Region / Test (Name or ID) / Product (Code + Desc + Cooking Time)
+              — Columns: Protocol Term — Values: Avg Response (selected Question)
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:10px; overflow:auto; max-height: 460px;">
+          <div id="pivotWrap"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <div id="legendTip" class="legend-tip"></div>
+</body>
+</html>
+
