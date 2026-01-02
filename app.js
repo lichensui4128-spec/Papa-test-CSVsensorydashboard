@@ -63,6 +63,47 @@ function toNumber(x) {
   return Number.isFinite(n) ? n : null;
 }
 
+function normalizeHeader(s) {
+  return String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function resolveCol(headers, candidates) {
+  const map = new Map(headers.map(h => [normalizeHeader(h), h]));
+  for (const c of candidates) {
+    const key = normalizeHeader(c);
+    if (map.has(key)) return map.get(key);
+  }
+  return null;
+}
+
+function resolveColumns(headers) {
+  const candidates = {
+    region: [COL.region],
+    productCode: [COL.productCode],
+    productDesc: [COL.productDesc],
+    protocol: [COL.protocol],
+    cooking: [COL.cooking, "Cooking method", "Cooking m"],
+    cookingTime: [COL.cookingTime, "Time (mm:ss)"],
+    testSample: [COL.testSample],
+    studyName: [COL.studyName],
+    studyId: [COL.studyId],
+    testName: [COL.testName],
+    testStartDate: [COL.testStartDate, "Test Start Date"],
+    testId: [COL.testId],
+    question: [COL.question],
+    value: [COL.value]
+  };
+
+  for (const [key, list] of Object.entries(candidates)) {
+    const resolved = resolveCol(headers, list);
+    if (resolved) {
+      COL[key] = resolved;
+    } else {
+      console.warn(`Column not found for "${key}". Tried: ${list.join(", ")}`);
+    }
+  }
+}
+
 function uniqueValues(data, col) {
   const s = new Set();
   for (const r of data) {
@@ -108,6 +149,7 @@ function clearMultiSelect(selectEl) {
 }
 
 function updateDateLabel() {
+  if (!els.f_test_date_label) return;
   if (!DATE_VALUES.length || !dateFilterActive) {
     els.f_test_date_label.textContent = "All";
     return;
@@ -252,7 +294,7 @@ function updateAll() {
   renderBarByTestSample(filtered, selectedQuestions);
 
   // Pivot
-  renderPivot(filtered, primaryQ);
+  renderPivot(filtered, selectedQuestions);
 }
 
 // -----------------------------
@@ -377,7 +419,7 @@ function buildDatasetsBySample(data, questions, maxSamples = 8) {
       pickFirst(meta.testNames) || "N/A",
       pickFirst(meta.productDescs) || "N/A",
       pickFirst(meta.protocols) || "N/A"
-    ].join(" - ");
+    ].join("_");
 
     return {
       label: `TestSample_ID: ${sid}`,
@@ -481,14 +523,17 @@ function renderBarByTestSample(data, selectedQuestions) {
 // Cols: Protocol Term
 // Values: Avg Response
 // -----------------------------
-function renderPivot(data, primaryQ) {
-  if (!primaryQ) {
-    els.pivotWrap.innerHTML = `<div class="muted">Select at least 1 Question. Pivot uses the FIRST selected.</div>`;
+function renderPivot(data, selectedQuestions) {
+  const subset = data;
+  const questionList = (selectedQuestions && selectedQuestions.length)
+    ? selectedQuestions
+    : uniqueValues(subset, COL.question);
+  const protocolList = uniqueValues(subset, COL.protocol);
+
+  if (!questionList.length) {
+    els.pivotWrap.innerHTML = `<div class="muted">No Question Description values after filters.</div>`;
     return;
   }
-
-  const subset = data.filter(r => String(safeGet(r, COL.question) || "") === String(primaryQ));
-  const protocolList = uniqueValues(subset, COL.protocol);
 
   if (!protocolList.length) {
     els.pivotWrap.innerHTML = `<div class="muted">No Protocol Term values after filters.</div>`;
@@ -512,20 +557,24 @@ function renderPivot(data, primaryQ) {
 
   for (const r of subset) {
     const v = toNumber(safeGet(r, COL.value));
+    const q = String(safeGet(r, COL.question) ?? "");
     const p = String(safeGet(r, COL.protocol) ?? "");
-    if (v == null || !p) continue;
+    if (v == null || !p || !q) continue;
+    if (questionList.length && !questionList.includes(q)) continue;
 
     const key = groupKey(r);
     if (!groups.has(key)) {
       const [region, test, pc, pd, ct] = key.split("||");
       groups.set(key, {
         region, test, pc, pd, ct,
-        cells: new Map() // protocol -> {sum,n}
+        cells: new Map() // question -> Map(protocol -> {sum,n})
       });
     }
     const g = groups.get(key);
-    if (!g.cells.has(p)) g.cells.set(p, {sum:0, n:0});
-    const cell = g.cells.get(p);
+    if (!g.cells.has(q)) g.cells.set(q, new Map());
+    const qMap = g.cells.get(q);
+    if (!qMap.has(p)) qMap.set(p, {sum:0, n:0});
+    const cell = qMap.get(p);
     cell.sum += v;
     cell.n += 1;
   }
@@ -535,12 +584,15 @@ function renderPivot(data, primaryQ) {
   let html = `<table>
     <thead>
       <tr>
-        <th>Region</th>
-        <th>Test (Name/ID)</th>
-        <th>Product Code</th>
-        <th>Product Description</th>
-        <th>Cooking Time</th>
-        ${protocolList.map(p => `<th>${escapeHtml(p)}</th>`).join("")}
+        <th rowspan="2">Region</th>
+        <th rowspan="2">Test (Name/ID)</th>
+        <th rowspan="2">Product Code</th>
+        <th rowspan="2">Product Description</th>
+        <th rowspan="2">Cooking Time</th>
+        ${protocolList.map(p => `<th colspan="${questionList.length}">${escapeHtml(p)}</th>`).join("")}
+      </tr>
+      <tr>
+        ${protocolList.map(() => questionList.map(q => `<th>${escapeHtml(q)}</th>`).join("")).join("")}
       </tr>
     </thead>
     <tbody>`;
@@ -554,9 +606,12 @@ function renderPivot(data, primaryQ) {
       <td>${escapeHtml(r.ct)}</td>`;
 
     for (const p of protocolList) {
-      const c = r.cells.get(p);
-      const val = c && c.n ? (c.sum/c.n) : "";
-      html += `<td style="text-align:right;">${val === "" ? "" : Number(val).toFixed(2)}</td>`;
+      for (const q of questionList) {
+        const qMap = r.cells.get(q);
+        const c = qMap ? qMap.get(p) : null;
+        const val = c && c.n ? (c.sum/c.n) : "";
+        html += `<td style="text-align:right;">${val === "" ? "" : Number(val).toFixed(2)}</td>`;
+      }
     }
 
     html += `</tr>`;
@@ -580,11 +635,25 @@ function showLegendTip(evt, legend, item) {
     return;
   }
 
-  const e = evt.native || evt;
+  const rect = legend.chart.canvas.getBoundingClientRect();
+  let x;
+  let y;
+
+  if (evt && evt.native && typeof evt.native.clientX === "number") {
+    x = evt.native.clientX;
+    y = evt.native.clientY;
+  } else if (evt && typeof evt.x === "number" && typeof evt.y === "number") {
+    x = rect.left + evt.x;
+    y = rect.top + evt.y;
+  } else {
+    hideLegendTip();
+    return;
+  }
+
   els.legendTip.textContent = text;
   els.legendTip.style.display = "block";
-  els.legendTip.style.left = `${e.clientX + 12}px`;
-  els.legendTip.style.top = `${e.clientY + 12}px`;
+  els.legendTip.style.left = `${x + 12}px`;
+  els.legendTip.style.top = `${y + 12}px`;
 }
 
 function hideLegendTip() {
@@ -638,6 +707,8 @@ els.csv.addEventListener("change", (e) => {
         setStatus("No rows found. Is the CSV empty?");
         return;
       }
+
+      resolveColumns(RAW[0] ? Object.keys(RAW[0]) : []);
 
       // Populate dropdowns (multi-select)
       setMultiSelectOptions(els.f_question, uniqueValues(RAW, COL.question));
