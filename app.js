@@ -25,6 +25,7 @@ let radarChart = null;
 let DATE_VALUES = [];
 let dateFilterActive = false;
 let isUpdatingFilters = false;
+let lastPivotCsv = null;
 
 // -----------------------------
 const els = {
@@ -49,6 +50,7 @@ const els = {
   kpiLine: document.getElementById("kpiLine"),
   pivotWrap: document.getElementById("pivotWrap"),
   legendTip: document.getElementById("legendTip"),
+  exportPivotBtn: document.getElementById("exportPivotBtn"),
 };
 
 // -----------------------------
@@ -532,11 +534,13 @@ function renderPivot(data, selectedQuestions) {
 
   if (!questionList.length) {
     els.pivotWrap.innerHTML = `<div class="muted">No Question Description values after filters.</div>`;
+    lastPivotCsv = null;
     return;
   }
 
   if (!protocolList.length) {
     els.pivotWrap.innerHTML = `<div class="muted">No Protocol Term values after filters.</div>`;
+    lastPivotCsv = null;
     return;
   }
 
@@ -580,6 +584,19 @@ function renderPivot(data, selectedQuestions) {
   }
 
   const rows = Array.from(groups.values());
+  const csvHeaders = [
+    "Region",
+    "Test (Name/ID)",
+    "Product Code",
+    "Product Description",
+    "Cooking Time"
+  ];
+  const csvMetricHeaders = [];
+  for (const p of protocolList) {
+    for (const q of questionList) {
+      csvMetricHeaders.push(`${p} - ${q}`);
+    }
+  }
 
   let html = `<table>
     <thead>
@@ -619,12 +636,60 @@ function renderPivot(data, selectedQuestions) {
 
   html += `</tbody></table>`;
   els.pivotWrap.innerHTML = html;
+
+  const csvRows = rows.map(r => {
+    const out = [r.region, r.test, r.pc, r.pd, r.ct];
+    for (const p of protocolList) {
+      for (const q of questionList) {
+        const qMap = r.cells.get(q);
+        const c = qMap ? qMap.get(p) : null;
+        const val = c && c.n ? (c.sum / c.n) : "";
+        out.push(val === "" ? "" : Number(val).toFixed(2));
+      }
+    }
+    return out;
+  });
+
+  lastPivotCsv = {
+    headers: csvHeaders.concat(csvMetricHeaders),
+    rows: csvRows
+  };
 }
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, m => ({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
   }[m]));
+}
+
+function csvEscape(v) {
+  const s = String(v ?? "");
+  if (/[",\r\n]/.test(s)) {
+    return `"${s.replace(/"/g, "\"\"")}"`;
+  }
+  return s;
+}
+
+function buildCsv(headers, rows) {
+  const lines = [];
+  lines.push(headers.map(csvEscape).join(","));
+  for (const r of rows) {
+    lines.push(r.map(csvEscape).join(","));
+  }
+  return lines.join("\r\n");
+}
+
+function downloadCsv(filename, headers, rows) {
+  const csv = buildCsv(headers, rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function showLegendTip(evt, legend, item) {
@@ -687,6 +752,13 @@ function clearAllFiltersToDefault() {
 }
 
 els.clearAllBtn.addEventListener("click", () => clearAllFiltersToDefault());
+els.exportPivotBtn.addEventListener("click", () => {
+  if (!lastPivotCsv || !lastPivotCsv.rows.length) {
+    setStatus("No pivot data to export.");
+    return;
+  }
+  downloadCsv("pivot-table.csv", lastPivotCsv.headers, lastPivotCsv.rows);
+});
 
 // -----------------------------
 // Load CSV
